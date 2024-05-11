@@ -27,6 +27,7 @@ func main() {
 type serverConfig struct {
 	node     *maelstrom.Node
 	messages []float64
+	topology []string
 	sync.Mutex
 }
 
@@ -76,23 +77,35 @@ func (s *serverConfig) handleBroadcastMessageType(body map[string]any, source st
 	// if message is an original, ie not send by other nodes in the cluster,
 	// then we need to propagate it to all other nodes.
 	if source[0] != 'n' {
-		for _, nodeID := range s.node.NodeIDs() {
-			if nodeID == s.node.ID() {
-				continue
-			}
-
-			// to begin with, we are doing this synchronously
-			// ie this is strong consistency
-			err := s.node.Send(nodeID, body)
-			if err != nil {
-				panic(err)
-			}
-		}
+		go s.broadcastMessageAsynchronously(body)
 	}
 
 	return map[string]interface{}{
 		"type": "broadcast_ok",
 	}
+}
+
+func (s *serverConfig) broadcastMessageAsynchronously(body map[string]any) {
+	var wg sync.WaitGroup
+
+	for _, nodeID := range s.node.NodeIDs() {
+		if nodeID == s.node.ID() {
+			continue
+		}
+
+		wg.Add(1)
+		go s.broadcastMessageToNode(body, nodeID, &wg)
+	}
+
+	wg.Wait()
+}
+
+func (s *serverConfig) broadcastMessageToNode(body map[string]any, nodeID string, wg *sync.WaitGroup) {
+	err := s.node.Send(nodeID, body)
+	if err != nil {
+		panic(err)
+	}
+	wg.Done()
 }
 
 /*
